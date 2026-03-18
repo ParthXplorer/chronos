@@ -2,7 +2,6 @@ CREATE DATABASE chronos_db;
 USE chronos_db;
 
 
-
 CREATE TABLE USERS (
     User_ID INT PRIMARY KEY AUTO_INCREMENT,
     Name VARCHAR(100) NOT NULL,
@@ -11,6 +10,8 @@ CREATE TABLE USERS (
     Role ENUM('Retail', 'Admin', 'MarketMaker') DEFAULT 'Retail',
     Wallet_Balance DECIMAL(15, 2) DEFAULT 0.00,
     Reserved_Balance DECIMAL(15, 2) DEFAULT 0.00,
+    Password_Hash VARCHAR(255) NOT NULL DEFAULT '',
+    Is_Active BOOLEAN DEFAULT TRUE,
     CONSTRAINT chk_wallet_positive CHECK (Wallet_Balance >= 0),
     CONSTRAINT chk_reserved_positive CHECK (Reserved_Balance >= 0)
 );
