@@ -27,5 +27,5 @@ def login(credentials: schemas.UserLogin, db: Session = Depends(get_db)):
     user = db.query(models.User).filter(models.User.Email == credentials.email).first()
     if not user or not auth.verify_password(credentials.password, user.Password_Hash):
         raise HTTPException(status_code=401, detail="Invalid email or password")
-    token = auth.create_access_token({"sub": user.User_ID})
+    token = auth.create_access_token({"sub": str(user.User_ID)})
     return {"access_token": token}
