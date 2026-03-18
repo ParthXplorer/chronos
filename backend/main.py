@@ -1,7 +1,7 @@
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from app.routers import auth, stocks, orders, analytics, portfolio
+from app.routers import auth, stocks, orders, analytics, portfolio, admin
 from app.websocket import broadcast_loop
 from app.engine_bridge import reload_open_orders, shutdown_engine, ping
 from app.database import SessionLocal
@@ -9,6 +9,7 @@ import asyncio
 import logging
 import os
 
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
 log = logging.getLogger("main")
 
 @asynccontextmanager
@@ -64,7 +65,8 @@ app.include_router(auth.router)
 app.include_router(stocks.router)
 app.include_router(orders.router)
 app.include_router(analytics.router)
-app.include_router(portfolio.router)   # was missing
+app.include_router(portfolio.router)
+app.include_router(admin.router)   # was missing
 
 @app.get("/")
 def root():
