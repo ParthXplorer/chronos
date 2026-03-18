@@ -1,0 +1,84 @@
+@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@300;400;500;600;700&family=Barlow+Condensed:wght@400;500;600;700;800&display=swap');
+
+:root {
+  --bg-primary:   #07090f;
+  --bg-secondary: #0c1018;
+  --bg-tertiary:  #111827;
+  --bg-card:      #0f1520;
+  --bg-hover:     #161f2e;
+
+  --border:       rgba(255,255,255,0.06);
+  --border-accent: rgba(240,180,41,0.25);
+
+  --amber:        #f0b429;
+  --amber-dim:    rgba(240,180,41,0.12);
+  --amber-glow:   rgba(240,180,41,0.04);
+
+  --green:        #10b981;
+  --green-dim:    rgba(16,185,129,0.12);
+  --red:          #ef4444;
+  --red-dim:      rgba(239,68,68,0.12);
+  --blue:         #3b82f6;
+
+  --text-primary:   #e2e8f0;
+  --text-secondary: #94a3b8;
+  --text-muted:     #475569;
+  --text-amber:     #f0b429;
+
+  --font-mono: 'IBM Plex Mono', 'Courier New', monospace;
+  --font-display: 'Barlow Condensed', sans-serif;
+}
+
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+html, body, #root {
+  height: 100%;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  font-size: 13px;
+  line-height: 1.5;
+  overflow: hidden;
+}
+
+/* Scrollbar */
+::-webkit-scrollbar { width: 3px; height: 3px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: rgba(240,180,41,0.2); border-radius: 2px; }
+
+/* Inputs */
+input, select, button, textarea {
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+input:focus, select:focus {
+  outline: none;
+  border-color: var(--amber) !important;
+  box-shadow: 0 0 0 2px rgba(240,180,41,0.1);
+}
+
+/* Number flash animation */
+@keyframes flash-green {
+  0%   { background: rgba(16,185,129,0.3); }
+  100% { background: transparent; }
+}
+@keyframes flash-red {
+  0%   { background: rgba(239,68,68,0.3); }
+  100% { background: transparent; }
+}
+@keyframes ticker-scroll {
+  0%   { transform: translateX(0); }
+  100% { transform: translateX(-50%); }
+}
+@keyframes pulse-dot {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0.3; }
+}
+@keyframes slide-in {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+.flash-green { animation: flash-green 0.6s ease-out; }
+.flash-red   { animation: flash-red   0.6s ease-out; }
+.slide-in    { animation: slide-in 0.25s ease-out both; }
