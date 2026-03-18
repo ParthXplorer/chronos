@@ -1,24 +1,47 @@
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from app.routers import auth, stocks, orders, analytics
-from app.websocket import manager, broadcast_loop
+from app.routers import auth, stocks, orders, analytics, portfolio
+from app.websocket import broadcast_loop
+from app.engine_bridge import reload_open_orders, shutdown_engine, ping
+from app.database import SessionLocal
 import asyncio
+import logging
+import os
 
-# ---------------------------------------------------------------------------
-# Lifespan — starts the background WebSocket broadcast task on startup
-# ---------------------------------------------------------------------------
+log = logging.getLogger("main")
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Start broadcasting; task runs until the server shuts down
+    # ── Startup ───────────────────────────────────────────────────────────────
+    # 1. Verify the C++ engine is reachable
+    if ping():
+        log.info("Matching engine: online")
+    else:
+        log.warning("Matching engine: not responding — orders will queue without matching")
+
+    # 2. Replay open orders so the in-memory book matches the DB
+    db = SessionLocal()
+    try:
+        n = reload_open_orders(db)
+        log.info("Loaded %d open orders into engine book", n)
+    except Exception as exc:
+        log.error("Failed to reload open orders: %s", exc)
+    finally:
+        db.close()
+
+    # 3. Start the WebSocket broadcast loop
     task = asyncio.create_task(broadcast_loop())
+
     yield
-    # Graceful shutdown — cancel the loop
+
+    # ── Shutdown ──────────────────────────────────────────────────────────────
     task.cancel()
     try:
         await task
     except asyncio.CancelledError:
         pass
+    shutdown_engine()
 
 app = FastAPI(
     title="Chronos Exchange API",
@@ -27,9 +50,11 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+ALLOWED_ORIGINS = os.getenv("ALLOWED_ORIGINS", "http://localhost:5173").split(",")
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173"],
+    allow_origins=ALLOWED_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -39,6 +64,7 @@ app.include_router(auth.router)
 app.include_router(stocks.router)
 app.include_router(orders.router)
 app.include_router(analytics.router)
+app.include_router(portfolio.router)   # was missing
 
 @app.get("/")
 def root():
