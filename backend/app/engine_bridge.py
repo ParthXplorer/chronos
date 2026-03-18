@@ -266,10 +266,16 @@ def _persist_fills(db: Session, fills: list[dict]) -> None:
                 if buyer:
                     cost = exec_price * qty
                     if buy_order.Type == "Limit":
-                        # Release the reservation that was taken at order time
+                        # Reservation was taken at limit_price * qty, not exec_price.
+                        # Release at limit_price to match what was reserved.
+                        reserved_release = Decimal(str(buy_order.Limit_Price)) * qty
                         buyer.Reserved_Balance = max(
-                            Decimal("0.00"), buyer.Reserved_Balance - cost
+                            Decimal("0.00"), buyer.Reserved_Balance - reserved_release
                         )
+                        # If the order is now fully filled, flush any rounding
+                        # remainder so Reserved_Balance returns exactly to 0.
+                        if buy_order.Rem_Qty == 0:
+                            buyer.Reserved_Balance = Decimal("0.00")
                     buyer.Wallet_Balance -= cost
 
             # 5 ── Seller wallet ───────────────────────────────────────────────

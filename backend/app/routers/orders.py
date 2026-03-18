@@ -1,4 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException
+from decimal import Decimal
 from sqlalchemy.orm import Session
 from app.database import get_db
 from app import models, schemas, auth
@@ -120,7 +121,7 @@ def cancel_order(
     if order.Side == "Buy" and order.Type == "Limit" and order.Limit_Price:
         release = order.Limit_Price * order.Rem_Qty
         current_user.Reserved_Balance = max(
-            0, current_user.Reserved_Balance - float(release)
+            Decimal("0.00"), current_user.Reserved_Balance - release
         )
 
     order.Status  = "CANCELLED"
