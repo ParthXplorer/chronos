@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException
-from decimal import Decimal
 from sqlalchemy.orm import Session
+from decimal import Decimal
 from app.database import get_db
 from app import models, schemas, auth
 from app.engine_bridge import submit_order
@@ -14,13 +14,6 @@ def place_order(
     db: Session = Depends(get_db),
     current_user: models.User = Depends(auth.get_current_user)
 ):
-    """
-    Place a new order.
-
-    Response includes the created order AND any immediate fills produced by
-    the matching engine.  A fills list of [] means the order rested on the
-    book without matching anything yet.
-    """
     # ── Step 1: Validate stock ────────────────────────────────────────────────
     stock = db.query(models.Stock).filter(
         models.Stock.Symbol == order_data.symbol.upper()
@@ -38,7 +31,6 @@ def place_order(
     if order_data.type == "Limit" and not order_data.limit_price:
         raise HTTPException(status_code=422, detail="limit_price is required for Limit orders")
     if order_data.type == "Market" and order_data.side == "Buy":
-        # Market buys need funds too — estimate using LTP
         if stock.LTP == 0:
             raise HTTPException(status_code=400, detail="No last traded price available for market order")
 
@@ -47,7 +39,6 @@ def place_order(
         if order_data.type == "Limit":
             required = order_data.limit_price * order_data.quantity
         else:
-            # Market buy: reserve at LTP × qty (worst case estimate)
             required = stock.LTP * order_data.quantity
 
         available = current_user.Wallet_Balance - current_user.Reserved_Balance
@@ -74,12 +65,39 @@ def place_order(
     try:
         fills = submit_order(db, new_order)
     except RuntimeError as e:
-        # Engine binary not built — don't fail the order, just warn
         fills = []
         print(f"[engine_bridge] {e}")
 
-    # Refresh order after the bridge may have updated its status/Rem_Qty
     db.refresh(new_order)
+
+    # ── Step 6: Market orders must fill immediately or be cancelled ───────────
+    # A market order can never rest on the book. If the engine returned no
+    # fills (no liquidity), cancel the order and release the reservation.
+    if new_order.Type == "Market" and new_order.Status == "OPEN":
+        new_order.Status  = "CANCELLED"
+        new_order.Rem_Qty = 0
+        if order_data.side == "Buy":
+            current_user.Reserved_Balance = max(
+                Decimal("0.00"),
+                current_user.Reserved_Balance - Decimal(str(stock.LTP)) * order_data.quantity
+            )
+        db.commit()
+        db.refresh(new_order)
+        return {
+            "order": {
+                "order_id":    new_order.Order_ID,
+                "symbol":      new_order.Symbol,
+                "side":        new_order.Side,
+                "type":        new_order.Type,
+                "limit_price": str(new_order.Limit_Price),
+                "total_qty":   new_order.Total_Qty,
+                "rem_qty":     new_order.Rem_Qty,
+                "status":      new_order.Status,
+                "timestamp":   str(new_order.Timestamp),
+            },
+            "fills": [],
+            "error": "Market order cancelled — no liquidity available",
+        }
 
     return {
         "order": {
@@ -103,10 +121,6 @@ def cancel_order(
     db: Session = Depends(get_db),
     current_user: models.User = Depends(auth.get_current_user)
 ):
-    """
-    Cancel an open or partially filled order.
-    Releases the reserved balance for unfilled buy orders.
-    """
     order = db.query(models.Order).filter(
         models.Order.Order_ID == order_id,
         models.Order.User_ID  == current_user.User_ID,
@@ -117,11 +131,11 @@ def cancel_order(
     if order.Status in ("FILLED", "CANCELLED"):
         raise HTTPException(status_code=400, detail=f"Cannot cancel a {order.Status} order")
 
-    # Release reserved balance for unfilled buy quantity
     if order.Side == "Buy" and order.Type == "Limit" and order.Limit_Price:
         release = order.Limit_Price * order.Rem_Qty
         current_user.Reserved_Balance = max(
-            Decimal("0.00"), current_user.Reserved_Balance - release
+            Decimal("0.00"),
+            current_user.Reserved_Balance - release
         )
 
     order.Status  = "CANCELLED"
@@ -136,7 +150,6 @@ def get_active_orders(
     db: Session = Depends(get_db),
     current_user: models.User = Depends(auth.get_current_user)
 ):
-    """Returns this user's open and partially filled orders."""
     return db.query(models.Order).filter(
         models.Order.User_ID == current_user.User_ID,
         models.Order.Status.in_(["OPEN", "PARTIAL"]),
@@ -148,7 +161,6 @@ def get_order_history(
     db: Session = Depends(get_db),
     current_user: models.User = Depends(auth.get_current_user)
 ):
-    """Returns all orders for this user, newest first."""
     orders = db.query(models.Order).filter(
         models.Order.User_ID == current_user.User_ID,
     ).order_by(models.Order.Timestamp.desc()).limit(100).all()
