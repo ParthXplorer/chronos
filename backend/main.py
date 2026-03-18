@@ -1,6 +1,6 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from app.routers import auth, stocks, orders, portfolio
+from app.routers import auth, stocks, orders, portfolio,analytics
 
 app = FastAPI(
     title="Chronos Exchange API",
@@ -20,6 +20,7 @@ app.include_router(auth.router)
 app.include_router(stocks.router)
 app.include_router(orders.router)
 app.include_router(portfolio.router)
+app.include_router(analytics.router)
 
 @app.get("/")
 def root():
