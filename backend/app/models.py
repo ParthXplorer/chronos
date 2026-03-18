@@ -18,8 +18,9 @@ class Stock(Base):
     __tablename__ = "STOCKS"
     Symbol = Column(String(10), primary_key=True)
     Sector = Column(String(50))
-    LTP    = Column(DECIMAL(10, 2), default=0.00)
-    Status = Column(Enum('Active', 'Halted'), default='Active')
+    LTP        = Column(DECIMAL(10, 2), default=0.00)
+    Prev_Close = Column(DECIMAL(10, 2), default=0.00)
+    Status     = Column(Enum('Active', 'Halted'), default='Active')
 
 class Order(Base):
     __tablename__ = "ORDERS"

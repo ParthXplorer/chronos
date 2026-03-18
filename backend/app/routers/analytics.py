@@ -6,20 +6,42 @@ from app import models, auth
 
 router = APIRouter(prefix="/analytics", tags=["Analytics"])
 
-# 1. Top Gainers — top 3 stocks with highest LTP
+# 1. Top Gainers — top 3 stocks by percentage gain vs previous close
 @router.get("/top-gainers")
 def top_gainers(db: Session = Depends(get_db)):
-    stocks = db.query(models.Stock).filter(
-        models.Stock.Status == 'Active'
-    ).order_by(models.Stock.LTP.desc()).limit(3).all()
+    from sqlalchemy import case
 
-    return [{"symbol": s.Symbol, "sector": s.Sector, "ltp": str(s.LTP)} for s in stocks]
+    stocks = db.query(models.Stock).filter(
+        models.Stock.Status == 'Active',
+        models.Stock.Prev_Close > 0        # exclude stocks with no prior reference
+    ).order_by(
+        ((models.Stock.LTP - models.Stock.Prev_Close) / models.Stock.Prev_Close).desc()
+    ).limit(3).all()
+
+    return [
+        {
+            "symbol": s.Symbol,
+            "sector": s.Sector,
+            "ltp": str(s.LTP),
+            "prev_close": str(s.Prev_Close),
+            "change_pct": round(
+                (float(s.LTP) - float(s.Prev_Close)) / float(s.Prev_Close) * 100, 2
+            )
+        }
+        for s in stocks
+    ]
 
 # 2. Whale Alert — trades with value > 100,000
 @router.get("/whale-alert")
 def whale_alert(db: Session = Depends(get_db)):
+    from sqlalchemy import func
+    from datetime import datetime, timedelta
+
+    one_hour_ago = datetime.utcnow() - timedelta(hours=1)
+
     trades = db.query(models.Trade).filter(
-        (models.Trade.Exec_Price * models.Trade.Quantity) > 100000
+        (models.Trade.Exec_Price * models.Trade.Quantity) > 100000,
+        models.Trade.Timestamp >= one_hour_ago
     ).order_by(models.Trade.Timestamp.desc()).all()
 
     return [
