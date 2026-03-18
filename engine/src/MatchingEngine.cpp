@@ -51,39 +51,34 @@ void MatchingEngine::restOrder(const Order& order) {
     else                          book.addAsk(order);
 }
 
-
 std::vector<TradeResult> MatchingEngine::matchLimit(Order& incoming) {
     std::vector<TradeResult> fills;
     OrderBook& book = getBook(incoming.symbol);
+    std::vector<Order> skipped;  // self-trade orders temporarily removed
 
     if (incoming.side == Side::Buy) {
-        // A buy limit crosses when its limit_price >= best ask price
         while (incoming.quantity > 0 && book.hasAsk()) {
             double best_ask = book.bestAskPrice();
-            if (incoming.limit_price < best_ask) break;  // no longer crosses
+            if (incoming.limit_price < best_ask) break;
 
             Order& resting = book.bestAsk();
 
-            // Self-trade prevention
             if (incoming.user_id == resting.user_id) {
-                // Skip this level — don't pop it, just stop matching
-                // (a more sophisticated engine would scan deeper, but for
-                //  this exchange design we simply stop the aggressor here)
-                break;
+                skipped.push_back(resting);  // save a copy
+                book.popBestAsk();           // remove so next bestAsk() advances
+                continue;
             }
 
             fills.push_back(makeFill(incoming, resting));
-
             if (resting.quantity == 0) book.popBestAsk();
         }
+        // Restore skipped orders — note: they rejoin at back of their
+        // price level, losing original time priority (known tradeoff)
+        for (auto& o : skipped) book.addAsk(o);
 
-        // Rest any unfilled remainder on the bid side
-        if (incoming.quantity > 0) {
-            book.addBid(incoming);
-        }
+        if (incoming.quantity > 0) book.addBid(incoming);
 
     } else {
-        // A sell limit crosses when its limit_price <= best bid price
         while (incoming.quantity > 0 && book.hasBid()) {
             double best_bid = book.bestBidPrice();
             if (incoming.limit_price > best_bid) break;
@@ -91,17 +86,17 @@ std::vector<TradeResult> MatchingEngine::matchLimit(Order& incoming) {
             Order& resting = book.bestBid();
 
             if (incoming.user_id == resting.user_id) {
-                break;
+                skipped.push_back(resting);
+                book.popBestBid();
+                continue;
             }
 
             fills.push_back(makeFill(incoming, resting));
-
             if (resting.quantity == 0) book.popBestBid();
         }
+        for (auto& o : skipped) book.addBid(o);
 
-        if (incoming.quantity > 0) {
-            book.addAsk(incoming);
-        }
+        if (incoming.quantity > 0) book.addAsk(incoming);
     }
 
     return fills;
@@ -111,32 +106,37 @@ std::vector<TradeResult> MatchingEngine::matchLimit(Order& incoming) {
 std::vector<TradeResult> MatchingEngine::matchMarket(Order& incoming) {
     std::vector<TradeResult> fills;
     OrderBook& book = getBook(incoming.symbol);
+    std::vector<Order> skipped;
 
     if (incoming.side == Side::Buy) {
         while (incoming.quantity > 0 && book.hasAsk()) {
             Order& resting = book.bestAsk();
 
-            if (incoming.user_id == resting.user_id) break;
+            if (incoming.user_id == resting.user_id) {
+                skipped.push_back(resting);
+                book.popBestAsk();
+                continue;
+            }
 
-            // For market orders we use the resting ask's limit price
-            // makeFill() already picks resting.limit_price as exec_price
             fills.push_back(makeFill(incoming, resting));
-
             if (resting.quantity == 0) book.popBestAsk();
         }
-        // Market orders never rest — if unfilled, they are simply rejected
-        // (the Python bridge treats remaining_qty > 0 as a partial/cancel)
+        for (auto& o : skipped) book.addAsk(o);
 
     } else {
         while (incoming.quantity > 0 && book.hasBid()) {
             Order& resting = book.bestBid();
 
-            if (incoming.user_id == resting.user_id) break;
+            if (incoming.user_id == resting.user_id) {
+                skipped.push_back(resting);
+                book.popBestBid();
+                continue;
+            }
 
             fills.push_back(makeFill(incoming, resting));
-
             if (resting.quantity == 0) book.popBestBid();
         }
+        for (auto& o : skipped) book.addBid(o);
     }
 
     return fills;

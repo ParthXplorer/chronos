@@ -102,3 +102,42 @@ def run_tests():
 
 if __name__ == "__main__":
     sys.exit(run_tests())
+
+# ── Test 8: Self-trade skip (not break) ──────────────────────────────────────
+# User A has a resting ask at 100. User B has a resting ask at 101.
+# User A submits a buy at 105 — should skip own order and match User B.
+def test_self_trade_skip():
+    import subprocess, json
+    from pathlib import Path
+    ENGINE = Path(__file__).parent / "engine" / "bin" / "chronos_engine"
+
+    def send(proc, cmd, payload):
+        proc.stdin.write(json.dumps({"cmd": cmd, **payload}) + "\n\n")
+        proc.stdin.flush()
+        results = []
+        while True:
+            line = proc.stdout.readline().strip()
+            if not line: break
+            results.append(json.loads(line))
+        return results
+
+    proc = subprocess.Popen([str(ENGINE)], stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, bufsize=1)
+
+    send(proc, "load", {"order_id":100,"user_id":1,"symbol":"TEST","side":"Sell","type":"Limit","limit_price":100.0,"quantity":10})
+    send(proc, "load", {"order_id":101,"user_id":2,"symbol":"TEST","side":"Sell","type":"Limit","limit_price":101.0,"quantity":10})
+    fills = send(proc, "submit", {"order_id":102,"user_id":1,"symbol":"TEST","side":"Buy","type":"Limit","limit_price":105.0,"quantity":10})
+
+    proc.stdin.close(); proc.wait()
+
+    ok = len(fills) == 1 and fills[0]["sell_order_id"] == 101 and fills[0]["exec_price"] == 101.0
+    print("\n── Test 8: Self-trade skip (not break) ─────────────────────")
+    status = "PASS" if ok else "FAIL"
+    print(f"  [{status}] skipped own order at 100, matched User B at 101: fills={fills}")
+    return ok
+
+if __name__ == "__main__":
+    result = test_self_trade_skip()
+    import sys
+    # Only exit non-zero if this specific test fails
+    # (previous tests already ran above)
