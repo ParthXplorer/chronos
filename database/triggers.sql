@@ -1,9 +1,9 @@
--- =============================================================================
+
 -- Chronos Exchange — database/triggers.sql
--- =============================================================================
+
 -- Three triggers that enforce business rules at the database layer, acting as
 -- a hard safety net even if application-level checks are bypassed.
--- =============================================================================
+
 
 -- Required to redefine the statement delimiter so trigger bodies
 -- (which contain semicolons) don't confuse the MySQL parser.
@@ -168,7 +168,7 @@ BEGIN
 
     
     -- Step 3: Update SELLER's holdings
-   
+
     -- We only decrease Quantity. Avg_Buy_Price is unchanged on a sell —
     -- the cost basis of remaining shares doesn't change.
     UPDATE HOLDINGS
