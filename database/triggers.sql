@@ -10,9 +10,9 @@
 DELIMITER $$
 
 
--- =============================================================================
+
 -- TRIGGER 1 — before_order_insert  (Pre-Insert Funds Check)
--- =============================================================================
+
 -- Fires BEFORE every INSERT into ORDERS.
 -- Business rule: a user cannot place a Limit Buy order if their available
 -- balance (Wallet_Balance - Reserved_Balance) is less than the order's
@@ -23,7 +23,7 @@ DELIMITER $$
 --     • Direct SQL inserts during testing / admin work
 --     • Race conditions where two orders are placed simultaneously
 --       before either Reserved_Balance update is committed
--- =============================================================================
+
 
 DROP TRIGGER IF EXISTS before_order_insert$$
 
@@ -59,16 +59,15 @@ BEGIN
 END$$
 
 
--- =============================================================================
 -- TRIGGER 2 — after_stock_status_update  (Audit Trail)
--- =============================================================================
+
 -- Fires AFTER every UPDATE on the STOCKS table.
 -- Business rule: whenever a stock's Status changes (Active ↔ Halted),
 -- an immutable record must be written to AUDIT_LOG.
 --
 -- OLD and NEW are MySQL's pseudo-records giving the row's values
 -- before and after the UPDATE statement.
--- =============================================================================
+
 
 DROP TRIGGER IF EXISTS after_stock_status_update$$
 
@@ -84,9 +83,8 @@ BEGIN
 END$$
 
 
--- =============================================================================
 -- TRIGGER 3 — after_trade_insert  (Holdings Update + Holding Log)
--- =============================================================================
+
 -- Fires AFTER every INSERT into TRADES.
 -- This is the most critical trigger — it keeps the HOLDINGS table and
 -- HOLDING_LOG in sync with every executed trade without requiring the
@@ -104,7 +102,7 @@ END$$
 --     CHECK constraint on HOLDINGS enforces this as a final backstop).
 --
 -- Both sides log to HOLDING_LOG for portfolio history.
--- =============================================================================
+
 
 DROP TRIGGER IF EXISTS after_trade_insert$$
 
@@ -122,9 +120,9 @@ BEGIN
     DECLARE v_current_avg   DECIMAL(10, 2) DEFAULT 0.00;
     DECLARE v_new_avg       DECIMAL(10, 2);
 
-    -- -------------------------------------------------------------------------
+
     -- Step 1: Resolve User_IDs and Symbol from the two linked orders
-    -- -------------------------------------------------------------------------
+
     SELECT User_ID, Symbol
     INTO   v_buy_user_id, v_symbol
     FROM   ORDERS
@@ -135,9 +133,9 @@ BEGIN
     FROM   ORDERS
     WHERE  Order_ID = NEW.Sell_Order_ID;
 
-    -- -------------------------------------------------------------------------
+  
     -- Step 2: Update BUYER's holdings
-    -- -------------------------------------------------------------------------
+
 
     -- Check whether the buyer already owns this stock
     SELECT Quantity, Avg_Buy_Price
@@ -168,18 +166,18 @@ BEGIN
             );
     END IF;
 
-    -- -------------------------------------------------------------------------
+    
     -- Step 3: Update SELLER's holdings
-    -- -------------------------------------------------------------------------
+   
     -- We only decrease Quantity. Avg_Buy_Price is unchanged on a sell —
     -- the cost basis of remaining shares doesn't change.
     UPDATE HOLDINGS
     SET    Quantity = Quantity - NEW.Quantity
     WHERE  User_ID = v_sell_user_id AND Symbol = v_symbol;
 
-    -- -------------------------------------------------------------------------
+   
     -- Step 4: Write HOLDING_LOG records for both parties
-    -- -------------------------------------------------------------------------
+  
     -- Buyer log: positive Change_Quantity = acquired shares
     INSERT INTO HOLDING_LOG (User_ID, Symbol, Change_Quantity, Exec_Price, Timestamp)
     VALUES (v_buy_user_id, v_symbol, NEW.Quantity, NEW.Exec_Price, NOW());
