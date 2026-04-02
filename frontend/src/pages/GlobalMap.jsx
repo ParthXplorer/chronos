@@ -191,11 +191,11 @@ function drawBubbles() {
         .text(s.city?.split(",")[0] ?? "");
 
       // staggered fade-in
-      g.style("opacity", 0)
-        .transition()
-        .delay(i * 55)
-        .duration(300)
-        .style("opacity", 1);
+      // g.style("opacity", 0)
+      //   .transition()
+      //   .delay(i * 55)
+      //   .duration(30)
+      //   .style("opacity", 1);
     });
   }
 
