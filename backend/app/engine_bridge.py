@@ -201,7 +201,26 @@ def submit_order(db: Session, order: models.Order) -> list[dict]:
 
     return fills
 
-
+def _lock_users_ordered(db: Session, user_id_a: int, user_id_b: int) -> dict:
+    """
+    BUG-3 FIX: Always acquire row locks on USERS in ascending ID order.
+    This prevents deadlocks when two concurrent fills involve the same pair
+    of users in opposite roles (buyer in fill A = seller in fill B).
+    """
+    lo, hi = sorted([user_id_a, user_id_b])
+    user_lo = (
+        db.query(models.User)
+        .filter(models.User.User_ID == lo)
+        .with_for_update()
+        .first()
+    )
+    user_hi = (
+        db.query(models.User)
+        .filter(models.User.User_ID == hi)
+        .with_for_update()
+        .first()
+    )
+    return {lo: user_lo, hi: user_hi}
 # ─────────────────────────────────────────────────────────────────────────────
 # DB persistence
 # ─────────────────────────────────────────────────────────────────────────────
@@ -238,6 +257,7 @@ def _persist_fills(db: Session, fills: list[dict]) -> None:
             db.flush()   # assign Trade_ID before trigger reads it
 
             # 2 ── Order statuses ──────────────────────────────────────────────
+            # AFTER
             for oid in (buy_id, sell_id):
                 o = (
                     db.query(models.Order)
@@ -247,50 +267,44 @@ def _persist_fills(db: Session, fills: list[dict]) -> None:
                 )
                 if o is None:
                     continue
-                o.Rem_Qty = max(0, o.Rem_Qty - qty)
+                # BUG-1 FIX: reject fills that exceed remaining quantity
+                if qty > o.Rem_Qty:
+                    raise ValueError(
+                        f"Fill qty {qty} exceeds Rem_Qty {o.Rem_Qty} for order {oid}. "
+                        f"Possible duplicate fill from engine. Rolling back."
+                    )
+                o.Rem_Qty -= qty
                 o.Status  = "FILLED" if o.Rem_Qty == 0 else "PARTIAL"
 
-            # 3 & 4 ── Buyer wallet ────────────────────────────────────────────
+            # AFTER — replace both blocks with canonical lock ordering
             buy_order = (
                 db.query(models.Order)
                 .filter(models.Order.Order_ID == buy_id)
                 .first()
             )
-            if buy_order:
-                buyer = (
-                    db.query(models.User)
-                    .filter(models.User.User_ID == buy_order.User_ID)
-                    .with_for_update()
-                    .first()
-                )
-                if buyer:
-                    cost = exec_price * qty
-                    if buy_order.Type == "Limit":
-                        # Reservation was taken at limit_price * qty, not exec_price.
-                        # Release at limit_price to match what was reserved.
-                        reserved_release = Decimal(str(buy_order.Limit_Price)) * qty
-                        buyer.Reserved_Balance = max(
-                            Decimal("0.00"), buyer.Reserved_Balance - reserved_release
-                        )
-                        # If the order is now fully filled, flush any rounding
-                        # remainder so Reserved_Balance returns exactly to 0.
-                        if buy_order.Rem_Qty == 0:
-                            buyer.Reserved_Balance = Decimal("0.00")
-                    buyer.Wallet_Balance -= cost
-
-            # 5 ── Seller wallet ───────────────────────────────────────────────
             sell_order = (
                 db.query(models.Order)
                 .filter(models.Order.Order_ID == sell_id)
                 .first()
             )
-            if sell_order:
-                seller = (
-                    db.query(models.User)
-                    .filter(models.User.User_ID == sell_order.User_ID)
-                    .with_for_update()
-                    .first()
-                )
+
+            if buy_order and sell_order:
+                # BUG-3 FIX: lock lower user_id first to prevent deadlock
+                users = _lock_users_ordered(db, buy_order.User_ID, sell_order.User_ID)
+                buyer  = users[buy_order.User_ID]
+                seller = users[sell_order.User_ID]
+
+                if buyer:
+                    cost = exec_price * qty
+                    if buy_order.Type == "Limit":
+                        reserved_release = Decimal(str(buy_order.Limit_Price)) * qty
+                        buyer.Reserved_Balance = max(
+                            Decimal("0.00"), buyer.Reserved_Balance - reserved_release
+                        )
+                        if buy_order.Rem_Qty == 0:
+                            buyer.Reserved_Balance = Decimal("0.00")
+                    buyer.Wallet_Balance -= cost
+
                 if seller:
                     seller.Wallet_Balance += exec_price * qty - fee
 

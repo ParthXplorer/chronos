@@ -7,7 +7,6 @@ from app.engine_bridge import submit_order
 
 router = APIRouter(prefix="/orders", tags=["Orders"])
 
-
 @router.post("/", status_code=201)
 def place_order(
     order_data: schemas.OrderCreate,
@@ -18,6 +17,7 @@ def place_order(
     stock = db.query(models.Stock).filter(
         models.Stock.Symbol == order_data.symbol.upper()
     ).first()
+    
     if not stock:
         raise HTTPException(status_code=404, detail="Stock not found")
     if stock.Status == "Halted":
@@ -34,17 +34,24 @@ def place_order(
         if stock.LTP == 0:
             raise HTTPException(status_code=400, detail="No last traded price available for market order")
 
-    # ── Step 3: Reserve funds for buy orders ──────────────────────────────────
+    # ── Step 3: Reserve funds for buy orders (BUG 1 FIX) ──────────────────────
     if order_data.side == "Buy":
         if order_data.type == "Limit":
             required = order_data.limit_price * order_data.quantity
         else:
             required = stock.LTP * order_data.quantity
 
-        available = current_user.Wallet_Balance - current_user.Reserved_Balance
+        # FIX: Acquire a row lock on the user to prevent double-spend race conditions
+        locked_user = db.query(models.User).filter(
+            models.User.User_ID == current_user.User_ID
+        ).with_for_update().first()
+
+        available = locked_user.Wallet_Balance - locked_user.Reserved_Balance
         if available < required:
             raise HTTPException(status_code=400, detail="Insufficient wallet balance")
-        current_user.Reserved_Balance += required
+        
+        locked_user.Reserved_Balance += required
+        db.add(locked_user)
 
     # ── Step 4: Persist the order ─────────────────────────────────────────────
     new_order = models.Order(
@@ -58,7 +65,7 @@ def place_order(
         Status      = "OPEN",
     )
     db.add(new_order)
-    db.commit()
+    db.commit() # Note: This commit officially reserves the funds and RELEASES the row lock
     db.refresh(new_order)
 
     # ── Step 5: Send to the C++ matching engine ───────────────────────────────
@@ -68,21 +75,37 @@ def place_order(
         fills = []
         print(f"[engine_bridge] {e}")
 
+    # ── Step 6: Market orders must fill immediately or be cancelled ───────────
     db.refresh(new_order)
 
-    # ── Step 6: Market orders must fill immediately or be cancelled ───────────
-    # A market order can never rest on the book. If the engine returned no
-    # fills (no liquidity), cancel the order and release the reservation.
-    if new_order.Type == "Market" and new_order.Status == "OPEN":
+    if new_order.Type == "Market" and new_order.Status in ("OPEN", "PARTIAL"):
+        unfilled_qty = new_order.Rem_Qty  
+
+        if order_data.side == "Buy" and unfilled_qty > 0:
+            release = Decimal(str(stock.LTP)) * unfilled_qty
+            
+            # FIX: Re-acquire the row lock because the previous commit dropped it
+            locked_user = db.query(models.User).filter(
+                models.User.User_ID == current_user.User_ID
+            ).with_for_update().first()
+
+            locked_user.Reserved_Balance = max(
+                Decimal("0.00"),
+                locked_user.Reserved_Balance - release
+            )
+            db.add(locked_user)
+
         new_order.Status  = "CANCELLED"
         new_order.Rem_Qty = 0
-        if order_data.side == "Buy":
-            current_user.Reserved_Balance = max(
-                Decimal("0.00"),
-                current_user.Reserved_Balance - Decimal(str(stock.LTP)) * order_data.quantity
-            )
         db.commit()
         db.refresh(new_order)
+
+        was_partial = len(fills) > 0
+        msg = (
+            "Market order partially filled and remainder cancelled"
+            if was_partial
+            else "Market order cancelled — no liquidity available"
+        )
         return {
             "order": {
                 "order_id":    new_order.Order_ID,
@@ -95,8 +118,8 @@ def place_order(
                 "status":      new_order.Status,
                 "timestamp":   str(new_order.Timestamp),
             },
-            "fills": [],
-            "error": "Market order cancelled — no liquidity available",
+            "fills": fills,
+            "message": msg,
         }
 
     return {
@@ -121,10 +144,11 @@ def cancel_order(
     db: Session = Depends(get_db),
     current_user: models.User = Depends(auth.get_current_user)
 ):
+    # Lock the order to prevent it from being filled while we cancel it
     order = db.query(models.Order).filter(
         models.Order.Order_ID == order_id,
         models.Order.User_ID  == current_user.User_ID,
-    ).first()
+    ).with_for_update().first()
 
     if not order:
         raise HTTPException(status_code=404, detail="Order not found")
@@ -133,10 +157,17 @@ def cancel_order(
 
     if order.Side == "Buy" and order.Type == "Limit" and order.Limit_Price:
         release = order.Limit_Price * order.Rem_Qty
-        current_user.Reserved_Balance = max(
+        
+        # BUG 2 FIX: Acquire a row lock on the user to serialize cancel operations
+        locked_user = db.query(models.User).filter(
+            models.User.User_ID == current_user.User_ID
+        ).with_for_update().first()
+
+        locked_user.Reserved_Balance = max(
             Decimal("0.00"),
-            current_user.Reserved_Balance - release
+            locked_user.Reserved_Balance - release
         )
+        db.add(locked_user)
 
     order.Status  = "CANCELLED"
     order.Rem_Qty = 0
