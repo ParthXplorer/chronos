@@ -1,0 +1,609 @@
+mysql> -- =============================================================================
+Imysql> -- Chronos Exchange — Task 6: Transaction Conflict Tests
+T;
+
+-- ── Session B (run during Session A's sleep) ─�mysql> -- =============================================================================
+��──────────────────────────�mysql> 
+mysql> -- =============================================================================
+�────
+START TRANSACTION;
+   SELECT Reserved_Balance FROM USERS WHERE Usermysql> -- SETUP: Clean slate for tests (Bulletproof dynamic user)
+ET Reserved_Balance = Resemysql> -- =============================================================================
+tatus = 'CANCEmysql> 
+mysql> -- Generate a random 8-character string for a guaranteed unique email
+mysql> SET @rand_ext = LEFT(REPLACE(UUID(), '-', ''), 8);
+ion ───────────────�Query OK, 0 rows affected (0.00 sec)
+
+mysql> SET @dyn_email = CONCAT('test_', @rand_ext, '@chronos.com');
+�────────────────────Query OK, 0 rows affected (0.00 sec)
+
+mysql> 
+mysql> -- Insert a fresh test user
+mysql> INSERT INTO USERS (Name, Email, Phone, Role, Wallet_Balance, Reserved_Balance)
+    -> VALUES ('Test Trader X', @dyn_email, '9000000001', 'Retail', 10000.00, 0.00);
+ASE
+     WHEN Reserved_Balance < 0 THEN '*** BUG CONFIRMED: negative Reserved_Query OK, 1 row affected (0.01 sec)
+
+mysql> 
+mysql> -- Capture the new valid user id
+mysql> SET @uid = LAST_INSERT_ID();
+lance = 0 THEN 'OK: both cancQuery OK, 0 rows affected (0.00 sec)
+
+mysql> 
+mysql> -- Insert a test stock
+ctly applied'
+ mysql> INSERT IGNORE INTO STOCKS (Symbol, Sector, LTP, Prev_Close, Status)
+OM USERS W    -> VALUES ('XTEST', 'Technology', 100.00, 95.00, 'Active');
+─�Query OK, 1 row affected (0.00 sec)
+
+mysql> 
+mysql> �SELECT CONCAT('Test user ID = ', @uid, ' | Email = ', @dyn_email) AS setup_info;
++-------------------------------------------------------+
+| setup_info                                            |
++-------------------------------------------------------+
+| Test user ID = 52 | Email = test_d2ce8686@chronos.com |
++-------------------------------------------------------+
+1 row in set (0.00 sec)
+
+mysql> 
+mysql> 
+mysql> -- =============================================================================
+mysql> -- TEST 1 — Double-spend race (Bug 1)
+�─────
+DELETE FROM ORDERS WHERmysql> -- =============================================================================
+mysql> 
+mysql> -- ── Session A (paste into connection 1) ──────────────────────────────────────
+ry (Bug 3)
+-- =======================mysql> START TRANSACTION;
+===================Query OK, 0 rows affected (0.00 sec)
+
+mysql>    SELECT Wallet_Balance - Reserved_Balance AS available_balance
+NSERT INTO HOLDINGS (User_I    ->    FROM USERS WHERE User_ID = @uid;
++-------------------+
+| available_balance |
++-------------------+
+|          10000.00 |
++-------------------+
+1 row in set (0.00 sec)
+
+mysql> 
+mysql>    DO SLEEP(3);
+Query OK, 0 rows affected (2.58 sec)
+
+mysql> 
+Emysql>    UPDATE USERS
+ST', 0, 100.00)
+    ->    SET Reserved_Balance = Reserved_Balance + 9000.00
+vg_Buy_Price =    ->    WHERE User_ID = @uid;
+ 100.00;
+
+INSERT INTO ORDQuery OK, 1 row affected (0.00 sec)
+Rows matched: 1  Changed: 1  Warnings: 0
+
+mysql> 
+mysql>    INSERT INTO ORDERS (User_ID, Symbol, Side, Type, Limit_Price, Total_Qty, Rem_Qty, Status)
+    ->    VALUES (@uid, 'XTEST', 'Buy', 'Limit', 100.00, 90, 90, 'OPEN');
+AST_INERROR 1644 (45000): Insufficient funds: wallet balance cannot cover this order
+mysql> COMMIT;
+SERT_ID(Query OK, 0 rows affected (0.01 sec)
+
+mysql> 
+mysql> -- ── Session B (paste into connection 2, run WHILE Session A is sleeping) ─────
+Rem_Qty, Status)
+VAmysql> START TRANSACTION;
+LUES (1, 'XTEST', 'Query OK, 0 rows affected (0.00 sec)
+
+mysql>    SELECT Wallet_Balance - Reserved_Balance AS available_balance
+T_INS    ->    FROM USERS WHERE User_ID = @uid;
+ERT_ID();
+
+INSERT INTO TRADES (Buy_O+-------------------+
+| available_balance |
++-------------------+
+|           1000.00 |
++-------------------+
+1 row in set (0.00 sec)
+
+mysql> 
+mysql>    UPDATE USERS
+rder_ID, Sell_Ord    ->    SET Reserved_Balance = Reserved_Balance + 9000.00
+    ->    WHERE User_ID = @uid;
+sell_oid, 5, 105.00, 0.05Query OK, 1 row affected (0.00 sec)
+Rows matched: 1  Changed: 1  Warnings: 0
+
+mysql> 
+mysql>    INSERT INTO ORDERS (User_ID, Symbol, Side, Type, Limit_Price, Total_Qty, Rem_Qty, Status)
+     ->    VALUES (@uid, 'XTEST', 'Buy', 'Limit', 100.00, 90, 90, 'OPEN');
+_Price ERROR 1644 (45000): Insufficient funds: wallet balance cannot cover this order
+mysql> COMMIT;
+L Query OK, 0 rows affected (0.01 sec)
+
+mysql> 
+mysql> -- ── Verification ─────────────────────────────────────────────────────────────
+LDINGS WHERE User_ID = @uid AND Symbol = 'XTEST';mysql> SELECT
+
+
+-- �    ->    Wallet_Balance,
+�─ Cleanup ──    ->    Reserved_Balance,
+    ->    Wallet_Balance - Reserved_Balance AS available,
+─────────────────    ->    CASE
+    ->      WHEN Reserved_Balance > Wallet_Balance THEN '*** BUG CONFIRMED: over-reserved ***'
+�    ->      ELSE 'OK'
+    ->    END AS status
+───
+DELETE     -> FROM USERS WHERE User_ID = @uid;
+= +----------------+------------------+-----------+--------------------------------------+
+| Wallet_Balance | Reserved_Balance | available | status                               |
++----------------+------------------+-----------+--------------------------------------+
+|       10000.00 |         18000.00 |  -8000.00 | *** BUG CONFIRMED: over-reserved *** |
++----------------+------------------+-----------+--------------------------------------+
+1 row in set (0.00 sec)
+
+mysql> 
+@mysql> -- ── Cleanup ──────────────────────────────────────────────────────────────────
+XTEST';
+
+
+-- ============mysql> DELETE FROM ORDERS WHERE User_ID = @uid;
+=========================================Query OK, 0 rows affected (0.00 sec)
+
+mysql> UPDATE USERS SET Reserved_Balance = 0.00 WHERE User_ID = @uid;
+let orderingQuery OK, 1 row affected (0.00 sec)
+Rows matched: 1  Changed: 1  Warnings: 0
+
+mysql> 
+mysql> 
+ (mysql> -- =============================================================================
+========mysql> -- TEST 2 — Concurrent cancel race (Bug 2)
+==========================
+
+UPDATE USERS SET mysql> -- =============================================================================
+mysql> 
+mysql> UPDATE USERS SET Reserved_Balance = 6000.00 WHERE User_ID = @uid;
+uantity, Avg_BuQuery OK, 1 row affected (0.01 sec)
+Rows matched: 1  Changed: 1  Warnings: 0
+
+mysql> 
+mysql> INSERT INTO ORDERS (User_ID, Symbol, Side, Type, Limit_Price, Total_Qty, Rem_Qty, Status)
+uanti    -> VALUES (@uid, 'XTEST', 'Buy', 'Limit', 100.00, 30, 30, 'OPEN'),
+    ->        (@uid, 'XTEST', 'Buy', 'Limit', 100.00, 30, 30, 'OPEN');
+Query OK, 2 rows affected (0.00 sec)
+Records: 2  Duplicates: 0  Warnings: 0
+
+mysql> 
+mysql> SET @oid1 = LAST_INSERT_ID();
+ERE User_ID = @uid;
+COMMIT;
+
+SQuery OK, 0 rows affected (0.00 sec)
+
+mysql> SET @oid2 = @oid1 + 1;
+T
+   u.Wallet_BalanQuery OK, 0 rows affected (0.00 sec)
+
+mysql> 
+mysql> -- ── Session A ────────────────────────────────────────────────────────────────
+atomically'
+     WHEN h.Quantity >mysql> START TRANSACTION;
+0 AND u.Wallet_BalQuery OK, 0 rows affected (0.00 sec)
+
+mysql>    SELECT Reserved_Balance FROM USERS WHERE User_ID = @uid;
+wallet not deb+------------------+
+| Reserved_Balance |
++------------------+
+|          6000.00 |
++------------------+
+1 row in set (0.01 sec)
+
+mysql>    DO SLEEP(2);
+*'
+     EQuery OK, 0 rows affected (4.96 sec)
+
+mysql>    
+ mysql>    UPDATE USERS SET Reserved_Balance = Reserved_Balance - 3000.00 WHERE User_ID = @uid;
+h ON h.UseQuery OK, 1 row affected (0.00 sec)
+Rows matched: 1  Changed: 1  Warnings: 0
+
+mysql>    UPDATE ORDERS SET Status = 'CANCELLED', Rem_Qty = 0 WHERE Order_ID = @oid1;
+Query OK, 1 row affected (0.00 sec)
+Rows matched: 1  Changed: 1  Warnings: 0
+
+mysql> COMMIT;
+nup ─�Query OK, 0 rows affected (0.01 sec)
+
+mysql> 
+mysql> -- ── Session B (run during Session A's sleep) ─────────────────────────────────
+�───────────────mysql> START TRANSACTION;
+──────�Query OK, 0 rows affected (0.00 sec)
+
+mysql>    SELECT Reserved_Balance FROM USERS WHERE User_ID = @uid;
+r_ID =+------------------+
+| Reserved_Balance |
++------------------+
+|          3000.00 |
++------------------+
+1 row in set (0.00 sec)
+
+mysql>    
+ @uimysql>    UPDATE USERS SET Reserved_Balance = Reserved_Balance - 3000.00 WHERE User_ID = @uid;
+ = 0Query OK, 1 row affected (0.00 sec)
+Rows matched: 1  Changed: 1  Warnings: 0
+
+mysql>    UPDATE ORDERS SET Status = 'CANCELLED', Rem_Qty = 0 WHERE Order_ID = @oid2;
+Query OK, 1 row affected (0.01 sec)
+Rows matched: 1  Changed: 1  Warnings: 0
+
+mysql> COMMIT;
+====Query OK, 0 rows affected (0.00 sec)
+
+mysql> 
+mysql> -- ── Verification ─────────────────────────────────────────────────────────────
+ice, Tomysql> SELECT
+tal_Qty    ->    Reserved_Balance,
+, Rem_Qty, Status)
+VA    ->    CASE
+ES (@u    ->      WHEN Reserved_Balance < 0 THEN '*** BUG CONFIRMED: negative Reserved_Balance ***'
+    ->      WHEN Reserved_Balance = 0 THEN 'OK: both cancels correctly applied'
+ic    ->      ELSE 'PARTIAL: one cancel applied'
+e, Fee)
+VALUES (@same_oid, @same_oid, 10    ->    END AS status
+, 100.00, 0.10);
+    -> FROM USERS WHERE User_ID = @uid;
+─�+------------------+------------------------------------+
+| Reserved_Balance | status                             |
++------------------+------------------------------------+
+|             0.00 | OK: both cancels correctly applied |
++------------------+------------------------------------+
+1 row in set (0.01 sec)
+
+mysql> 
+mysql> -- ── Cleanup ──────────────────────────────────────────────────────────────────
+M ORDERS WHERE Order_IDmysql> DELETE FROM ORDERS WHERE User_ID = @uid;
+ = @same_oid;
+
+
+-- ======================Query OK, 2 rows affected (0.00 sec)
+
+mysql> UPDATE USERS SET Reserved_Balance = 0.00 WHERE User_ID = @uid;
+=======
+-- TESTQuery OK, 0 rows affected (0.00 sec)
+Rows matched: 1  Changed: 0  Warnings: 0
+
+mysql> 
+mysql> 
+mysql> -- =============================================================================
+=======================mysql> -- TEST 3 — Trigger zero-quantity re-entry (Bug 3)
+================================
+
+-- Should fail:
+INSmysql> -- =============================================================================
+_Qty, Rem_Qty, Stmysql> 
+mysql> INSERT INTO HOLDINGS (User_ID, Symbol, Quantity, Avg_Buy_Price)
+    -> VALUES (@uid, 'XTEST', 0, 100.00)
+EN');
+
+-- Should pass:
+INSERT INTO    -> ON DUPLICATE KEY UPDATE Quantity = 0, Avg_Buy_Price = 100.00;
+Query OK, 1 row affected (0.01 sec)
+
+mysql> 
+mysql> INSERT INTO ORDERS (User_ID, Symbol, Side, Type, Limit_Price, Total_Qty, Rem_Qty, Status)
+10, 'OPEN');
+
+SELECT Re    -> VALUES (@uid, 'XTEST', 'Buy', 'Limit', 105.00, 5, 5, 'FILLED');
+eanQuery OK, 1 row affected (0.00 sec)
+
+mysql> SET @buy_oid = LAST_INSERT_ID();
+─Query OK, 0 rows affected (0.00 sec)
+
+mysql> 
+mysql> INSERT INTO ORDERS (User_ID, Symbol, Side, Type, Limit_Price, Total_Qty, Rem_Qty, Status)
+    -> VALUES (1, 'XTEST', 'Sell', 'Limit', 105.00, 5, 5, 'FILLED');
+──────Query OK, 1 row affected (0.01 sec)
+
+mysql> SET @sell_oid = LAST_INSERT_ID();
+Query OK, 0 rows affected (0.00 sec)
+
+mysql> 
+mysql> INSERT INTO TRADES (Buy_Order_ID, Sell_Order_ID, Quantity, Exec_Price, Fee)
+====================================    -> VALUES (@buy_oid, @sell_oid, 5, 105.00, 0.05);
+============================
+-- TEST 7 — DeadQuery OK, 1 row affected (0.00 sec)
+
+mysql> 
+mysql> -- Check if Avg_Buy_Price was corrupted
+========mysql> SELECT
+    ->    Quantity,
+====================    ->    Avg_Buy_Price,
+=================    ->    CASE
+========    ->      WHEN Avg_Buy_Price IS NULL THEN '*** BUG CONFIRMED: Avg_Buy_Price is NULL ***'
+    ->      WHEN Avg_Buy_Price = 105.00 THEN 'OK: correct average price'
+);
+
+SET @dyn_emai    ->      ELSE CONCAT('WRONG: expected 105.00, got ', Avg_Buy_Price)
+    ->    END AS status
+onos.com');
+INSER    -> FROM HOLDINGS WHERE User_ID = @uid AND Symbol = 'XTEST';
++----------+---------------+------------------------------------+
+| Quantity | Avg_Buy_Price | status                             |
++----------+---------------+------------------------------------+
+|        5 |        102.50 | WRONG: expected 105.00, got 102.50 |
++----------+---------------+------------------------------------+
+1 row in set (0.00 sec)
+
+mysql> 
+mysql> -- ── Cleanup ──────────────────────────────────────────────────────────────────
+�──�mysql> DELETE FROM TRADES WHERE Buy_Order_ID = @buy_oid;
+��────Query OK, 1 row affected (0.01 sec)
+
+mysql> DELETE FROM ORDERS WHERE Order_ID IN (@buy_oid, @sell_oid);
+��
+START TRANSACTIONQuery OK, 2 rows affected (0.00 sec)
+
+mysql> DELETE FROM HOLDING_LOG WHERE User_ID = @uid AND Symbol = 'XTEST';
+eserved_Balance + 1000.00Query OK, 1 row affected (0.01 sec)
+
+mysql> DELETE FROM HOLDINGS WHERE User_ID = @uid AND Symbol = 'XTEST';
+Query OK, 1 row affected (0.00 sec)
+
+mysql> 
+vmysql> 
+mysql> -- =============================================================================
+T;
+
+-- ── mysql> -- TEST 4 — Holdings/wallet ordering (Bug 4) + rollback behavior
+�───�mysql> -- =============================================================================
+mysql> 
+mysql> UPDATE USERS SET Wallet_Balance = 50.00, Reserved_Balance = 0.00 WHERE User_ID = @uid;
+eserved_Balance + 2000.00 WHERE UserQuery OK, 1 row affected (0.01 sec)
+Rows matched: 1  Changed: 1  Warnings: 0
+
+mysql> 
+mysql> START TRANSACTION;
+Query OK, 0 rows affected (0.00 sec)
+
+mysql>    INSERT INTO HOLDINGS (User_ID, Symbol, Quantity, Avg_Buy_Price)
+Us    ->    VALUES (@uid, 'XTEST', 10, 100.00)
+er_ID = @uid;
+COMMIT;
+
+-- ── Clean    ->    ON DUPLICATE KEY UPDATE Quantity = Quantity + 10, Avg_Buy_Price = 100.00;
+Query OK, 1 row affected (0.00 sec)
+
+mysql> 
+mysql>    -- Should fail and rollback
+�──────────�mysql>    UPDATE USERS SET Wallet_Balance = Wallet_Balance - 1000.00 WHERE User_ID = @uid;
+ERROR 3819 (HY000): Check constraint 'chk_wallet_positive' is violated.
+mysql> COMMIT;
+�Query OK, 0 rows affected (0.00 sec)
+
+mysql> 
+mysql> SELECT
+    ->    u.Wallet_Balance,
+USERS SET Reserved_Ba    ->    h.Quantity,
+.00 WH    ->    CASE
+ERE User    ->      WHEN u.Wallet_Balance < 0 THEN '*** BUG: wallet went negative ***'
+    ->      WHEN h.Quantity IS NULL OR h.Quantity = 0 THEN 'OK: transaction rolled back atomically'
+==========    ->      WHEN h.Quantity > 0 AND u.Wallet_Balance >= 0 THEN '*** BUG: holdings updated but wallet not debited ***'
+===================    ->      ELSE 'Unexpected state'
+=============================    ->    END AS atomicity_status
+    -> FROM USERS u
+    -> LEFT JOIN HOLDINGS h ON h.User_ID = u.User_ID AND h.Symbol = 'XTEST'
+P(5);
+     -> WHERE u.User_ID = @uid;
+  SELECT Symbol, LTP FRO+----------------+----------+------------------------------------------------------+
+| Wallet_Balance | Quantity | atomicity_status                                     |
++----------------+----------+------------------------------------------------------+
+|          50.00 |       10 | *** BUG: holdings updated but wallet not debited *** |
++----------------+----------+------------------------------------------------------+
+1 row in set (0.00 sec)
+
+mysql> 
+mysql> -- ── Cleanup ──────────────────────────────────────────────────────────────────
+mysql> DELETE FROM HOLDINGS WHERE User_ID = @uid AND Symbol = 'XTEST';
+───�Query OK, 1 row affected (0.00 sec)
+
+mysql> UPDATE USERS SET Wallet_Balance = 10000.00, Reserved_Balance = 0.00 WHERE User_ID = @uid;
+============Query OK, 1 row affected (0.01 sec)
+Rows matched: 1  Changed: 1  Warnings: 0
+
+mysql> 
+mysql> 
+mysql> -- =============================================================================
+mysql> -- TEST 5 — Trigger self-trade check 
+========================================mysql> -- =============================================================================
+_ID = @umysql> 
+mysql> INSERT INTO ORDERS (User_ID, Symbol, Side, Type, Limit_Price, Total_Qty, Rem_Qty, Status)
+ROM ORDERS WHERE    -> VALUES (@uid, 'XTEST', 'Buy',  'Limit', 100.00, 10, 10, 'FILLED');
+Query OK, 1 row affected (0.00 sec)
+
+mysql> SET @same_oid = LAST_INSERT_ID();
+EST';Query OK, 0 rows affected (0.00 sec)
+
+mysql> 
+mysql> INSERT INTO TRADES (Buy_Order_ID, Sell_Order_ID, Quantity, Exec_Price, Fee)
+    -> VALUES (@same_oid, @same_oid, 10, 100.00, 0.10);
+ERROR 3819 (HY000): Check constraint 'chk_self_trade_prevention' is violated.
+mysql> 
+mysql> -- ── Cleanup ──────────────────────────────────────────────────────────────────
+mysql> DELETE FROM ORDERS WHERE Order_ID = @same_oid;
+Query OK, 1 row affected (0.01 sec)
+
+mysql> 
+mysql> 
+mysql> -- =============================================================================
+mysql> -- TEST 6 — Trigger before_order_insert
+mysql> -- =============================================================================
+mysql> 
+mysql> -- Should fail:
+mysql> INSERT INTO ORDERS (User_ID, Symbol, Side, Type, Limit_Price, Total_Qty, Rem_Qty, Status)
+    -> VALUES (@uid, 'XTEST', 'Buy', 'Limit', 1500.00, 10, 10, 'OPEN');
+ERROR 1644 (45000): Insufficient funds: wallet balance cannot cover this order
+mysql> 
+mysql> -- Should pass:
+mysql> INSERT INTO ORDERS (User_ID, Symbol, Side, Type, Limit_Price, Total_Qty, Rem_Qty, Status)
+    -> VALUES (@uid, 'XTEST', 'Buy', 'Limit', 500.00, 10, 10, 'OPEN');
+Query OK, 1 row affected (0.01 sec)
+
+mysql> 
+mysql> SELECT Reserved_Balance FROM USERS WHERE User_ID = @uid;
++------------------+
+| Reserved_Balance |
++------------------+
+|             0.00 |
++------------------+
+1 row in set (0.00 sec)
+
+mysql> 
+mysql> -- ── Cleanup ──────────────────────────────────────────────────────────────────
+mysql> DELETE FROM ORDERS WHERE User_ID = @uid;
+Query OK, 1 row affected (0.00 sec)
+
+mysql> 
+mysql> 
+mysql> -- =============================================================================
+mysql> -- TEST 7 — Deadlock scenario 
+mysql> -- =============================================================================
+mysql> 
+mysql> INSERT IGNORE INTO STOCKS (Symbol, Sector, LTP, Prev_Close, Status)
+    -> VALUES ('YTEST', 'Technology', 200.00, 190.00, 'Active');
+Query OK, 1 row affected (0.01 sec)
+
+mysql> 
+mysql> SET @dyn_email_b = CONCAT('test_', LEFT(REPLACE(UUID(), '-', ''), 8), '_b@chronos.com');
+Query OK, 0 rows affected (0.00 sec)
+
+mysql> INSERT INTO USERS (Name, Email, Role, Wallet_Balance, Password_Hash)
+    -> VALUES ('Trader B', @dyn_email_b, 'Retail', 20000.00, 'x');
+Query OK, 1 row affected (0.00 sec)
+
+mysql> SET @uid2 = LAST_INSERT_ID();
+Query OK, 0 rows affected (0.00 sec)
+
+mysql> 
+mysql> -- ── Session A ────────────────────────────────────────────────────────────────
+mysql> START TRANSACTION;
+Query OK, 0 rows affected (0.01 sec)
+
+mysql>    UPDATE USERS SET Reserved_Balance = Reserved_Balance + 1000.00 WHERE User_ID = @uid;
+Query OK, 1 row affected (0.00 sec)
+Rows matched: 1  Changed: 1  Warnings: 0
+
+mysql>    DO SLEEP(2);
+Query OK, 0 rows affected (4.87 sec)
+
+mysql>    UPDATE USERS SET Reserved_Balance = Reserved_Balance + 2000.00 WHERE User_ID = @uid2;
+Query OK, 1 row affected (0.00 sec)
+Rows matched: 1  Changed: 1  Warnings: 0
+
+mysql> COMMIT;
+Query OK, 0 rows affected (0.01 sec)
+
+mysql> 
+mysql> -- ── Session B (run during Session A's sleep) ─────────────────────────────────
+mysql> START TRANSACTION;
+Query OK, 0 rows affected (0.00 sec)
+
+mysql>    UPDATE USERS SET Reserved_Balance = Reserved_Balance + 2000.00 WHERE User_ID = @uid2;
+Query OK, 1 row affected (0.00 sec)
+Rows matched: 1  Changed: 1  Warnings: 0
+
+mysql>    UPDATE USERS SET Reserved_Balance = Reserved_Balance + 1000.00 WHERE User_ID = @uid;
+Query OK, 1 row affected (0.00 sec)
+Rows matched: 1  Changed: 1  Warnings: 0
+
+mysql> COMMIT;
+Query OK, 0 rows affected (0.01 sec)
+
+mysql> 
+mysql> -- ── Cleanup ──────────────────────────────────────────────────────────────────
+mysql> UPDATE USERS SET Reserved_Balance = 0.00 WHERE User_ID IN (@uid, @uid2);
+Query OK, 2 rows affected (0.00 sec)
+Rows matched: 2  Changed: 2  Warnings: 0
+
+mysql> DELETE FROM USERS WHERE User_ID = @uid2;
+Query OK, 1 row affected (0.01 sec)
+
+mysql> DELETE FROM STOCKS WHERE Symbol = 'YTEST';
+Query OK, 1 row affected (0.00 sec)
+
+mysql> 
+mysql> 
+mysql> -- =============================================================================
+mysql> -- TEST 8 — Isolation level demonstration
+mysql> -- =============================================================================
+mysql> 
+mysql> START TRANSACTION;
+Query OK, 0 rows affected (0.00 sec)
+
+mysql>    SELECT Symbol, LTP FROM STOCKS WHERE Sector = 'Technology';
++--------+---------+
+| Symbol | LTP     |
++--------+---------+
+| AAPL   |  150.00 |
+| GOOGL  | 2800.00 |
+| INFY   | 1450.00 |
+| MSFT   |  300.00 |
+| TCS    | 3600.00 |
+| WIPRO  |  420.00 |
+| XTEST  |  100.00 |
++--------+---------+
+7 rows in set (0.00 sec)
+
+mysql>    DO SLEEP(5);
+Query OK, 0 rows affected (5.00 sec)
+
+mysql>    SELECT Symbol, LTP FROM STOCKS WHERE Sector = 'Technology';
++--------+---------+
+| Symbol | LTP     |
++--------+---------+
+| AAPL   |  150.00 |
+| GOOGL  | 2800.00 |
+| INFY   | 1450.00 |
+| MSFT   |  300.00 |
+| TCS    | 3600.00 |
+| WIPRO  |  420.00 |
+| XTEST  |  100.00 |
++--------+---------+
+7 rows in set (0.00 sec)
+
+mysql> COMMIT;
+Query OK, 0 rows affected (0.00 sec)
+
+mysql> 
+mysql> SELECT @@transaction_isolation;
++-------------------------+
+| @@transaction_isolation |
++-------------------------+
+| REPEATABLE-READ         |
++-------------------------+
+1 row in set (0.00 sec)
+
+mysql> 
+mysql> -- ── Cleanup ──────────────────────────────────────────────────────────────────
+mysql> UPDATE STOCKS SET LTP = 100.00 WHERE Symbol = 'XTEST';
+Query OK, 0 rows affected (0.00 sec)
+Rows matched: 1  Changed: 0  Warnings: 0
+
+mysql> 
+mysql> 
+mysql> -- =============================================================================
+mysql> -- FINAL CLEANUP
+mysql> -- =============================================================================
+mysql> 
+mysql> DELETE FROM HOLDING_LOG WHERE User_ID = @uid OR Symbol = 'XTEST';
+Query OK, 1 row affected (0.01 sec)
+
+mysql> DELETE FROM HOLDINGS WHERE User_ID = @uid;
+Query OK, 0 rows affected (0.00 sec)
+
+mysql> DELETE FROM ORDERS WHERE User_ID = @uid;
+Query OK, 0 rows affected (0.00 sec)
+
+mysql> DELETE FROM USERS WHERE User_ID = @uid;
+Query OK, 1 row affected (0.00 sec)
+
+mysql> DELETE FROM STOCKS WHERE Symbol = 'XTEST';
+Query OK, 1 row affected (0.01 sec)
+
+mysql> 
