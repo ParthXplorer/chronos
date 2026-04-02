@@ -51,7 +51,7 @@ export default function TradeMap() {
           setActiveTrades(prev => [...prev, newTrade]);
           setTimeout(() => {
             setActiveTrades(prev => prev.filter(t => t.id !== newTrade.id));
-          }, 1500);
+          }, 10000);
         }
       } catch (err) {
         console.error("Failed to parse websocket message", err);

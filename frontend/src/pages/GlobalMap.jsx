@@ -73,7 +73,7 @@ export default function GlobalMap({ stocks = [], onSelectSymbol }) {
     svg.selectAll("*").remove();
 
     const projection = d3.geoNaturalEarth1()
-      .scale(W / 6.5)
+      .scale(W / 5)
       .translate([W / 2, H / 2 + 20]);
 
     const path = d3.geoPath().projection(projection);
@@ -112,7 +112,7 @@ export default function GlobalMap({ stocks = [], onSelectSymbol }) {
       .catch(() => setMapError(true));
   }
 
-  function drawBubbles() {
+function drawBubbles() {
     const d3 = window.d3;
     if (!d3 || !svgRef.current?._projection) return;
 
@@ -121,12 +121,29 @@ export default function GlobalMap({ stocks = [], onSelectSymbol }) {
     const layer = svg.select(".bubbles-layer");
     layer.selectAll("*").remove();
 
-    const BUBBLE_R = 14; // uniform — all equal size for easy hovering
+    const BUBBLE_R = 8;
 
-    visible.forEach((s, i) => {
+    // 1. Calculate target coordinates for all stocks
+    const nodes = visible.map(s => {
       const coords = projection([s.lon, s.lat]);
-      if (!coords || isNaN(coords[0])) return;
-      const [px, py] = coords;
+      if (!coords || isNaN(coords[0])) return null;
+      // tx/ty are target locations. x/y are current locations.
+      return { ...s, tx: coords[0], ty: coords[1], x: coords[0], y: coords[1] };
+    }).filter(Boolean);
+
+    // 2. MAGIC FIX: D3 Force Simulation to prevent overlap!
+    // This pushes bubbles away from each other if they are closer than their radius
+    d3.forceSimulation(nodes)
+      .force("x", d3.forceX(d => d.tx).strength(0.8))
+      .force("y", d3.forceY(d => d.ty).strength(0.8))
+      .force("collide", d3.forceCollide(BUBBLE_R + 3).iterations(4))
+      .stop()
+      .tick(60); // Run the math instantly before drawing
+
+    // 3. Draw the properly spaced bubbles
+    nodes.forEach((s, i) => {
+      const px = s.x; // Use the collision-adjusted X
+      const py = s.y; // Use the collision-adjusted Y
       const color = getChangeColor(s);
       const pct   = getChangePct(s);
 
@@ -270,7 +287,7 @@ export default function GlobalMap({ stocks = [], onSelectSymbol }) {
           );
         })()}
 
-        <div style={s.legend}>
+        {/* <div style={s.legend}>
           {[
             { color: "var(--green)", label: "GAINING  (LTP ≥ PREV CLOSE)" },
             { color: "var(--red)",   label: "DECLINING (LTP < PREV CLOSE)" },
@@ -281,7 +298,7 @@ export default function GlobalMap({ stocks = [], onSelectSymbol }) {
               <span style={s.legendLabel}>{label}</span>
             </div>
           ))}
-        </div>
+        </div> */}
 
         <div style={s.cornerTag}>CHRONOS EXCHANGE · GLOBAL MARKET MAP</div>
       </div>
