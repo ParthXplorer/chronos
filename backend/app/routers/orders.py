@@ -41,10 +41,10 @@ def place_order(
         else:
             required = stock.LTP * order_data.quantity
 
-        # FIX: Acquire a row lock on the user to prevent double-spend race conditions
+        # FIX: Acquire a row lock AND force SQLAlchemy to discard the cached user
         locked_user = db.query(models.User).filter(
             models.User.User_ID == current_user.User_ID
-        ).with_for_update().first()
+        ).with_for_update().populate_existing().first()
 
         available = locked_user.Wallet_Balance - locked_user.Reserved_Balance
         if available < required:
@@ -84,10 +84,10 @@ def place_order(
         if order_data.side == "Buy" and unfilled_qty > 0:
             release = Decimal(str(stock.LTP)) * unfilled_qty
             
-            # FIX: Re-acquire the row lock because the previous commit dropped it
+            # FIX: Re-acquire the row lock with populate_existing
             locked_user = db.query(models.User).filter(
                 models.User.User_ID == current_user.User_ID
-            ).with_for_update().first()
+            ).with_for_update().populate_existing().first()
 
             locked_user.Reserved_Balance = max(
                 Decimal("0.00"),
@@ -158,10 +158,10 @@ def cancel_order(
     if order.Side == "Buy" and order.Type == "Limit" and order.Limit_Price:
         release = order.Limit_Price * order.Rem_Qty
         
-        # BUG 2 FIX: Acquire a row lock on the user to serialize cancel operations
+        # BUG 2 FIX: Acquire a row lock on the user with populate_existing
         locked_user = db.query(models.User).filter(
             models.User.User_ID == current_user.User_ID
-        ).with_for_update().first()
+        ).with_for_update().populate_existing().first()
 
         locked_user.Reserved_Balance = max(
             Decimal("0.00"),
