@@ -1,4 +1,4 @@
-# ◈ Chronos Exchange
+# Chronos Exchange
 
 A simulated stock exchange with a C++ matching engine, FastAPI backend, MySQL database, and React frontend. Built as a 4th semester DBMS project.
 
